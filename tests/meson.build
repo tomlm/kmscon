@@ -76,3 +76,11 @@ test_issue_parameter = executable(
     dependencies: [libtsm_deps, shl_deps],
 )
 test('test_issue_parameter', test_issue_parameter)
+
+test_pointer_shape = executable(
+    'test_pointer_shape',
+    'test_pointer_shape.c',
+    '../src/misc/pointer_shape.c',
+    include_directories: misc_inc,
+)
+test('test_pointer_shape', test_pointer_shape)

@@ -5,6 +5,7 @@ misc_srcs = [
     'conf.c',
     'issue.c',
     'issue_network.c',
+    'pointer_shape.c',
     'pty.c',
 ]
 misc_deps = [xkbcommon_deps, shl_deps, libtsm_deps]

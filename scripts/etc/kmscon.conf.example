@@ -86,6 +86,10 @@
 #mouse
 ## Force software cursor
 #soft-cursor
+## Xcursor theme for pointer shapes requested by applications (OSC 22)
+#pointer-theme=default
+## Pointer size in pixels (0 = follow the font height)
+#pointer-size=0
 
 ## Power Management
 ## Screen timeout in seconds (0 = disabled)

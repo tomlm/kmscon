@@ -42,6 +42,7 @@
 #include "font/font.h"
 #include "input/input.h"
 #include "issue.h"
+#include "pointer_shape.h"
 #include "pty.h"
 #include "render/text.h"
 #include "seat.h"
@@ -74,6 +75,19 @@ struct kmscon_pointer {
 	unsigned int posy;
 	char *copy;
 	int copy_len;
+
+	/* shapes set by the application with OSC 22 */
+	struct pointer_shape_stack shapes;
+	/* the shape the hardware cursor currently shows */
+	int shape;
+};
+
+/* A shape's image as loaded from the theme, before rotation. */
+struct shape_cache {
+	/* 0 = not checked yet, 1 = the theme has it, -1 = it doesn't */
+	int supported;
+	unsigned int size;
+	struct pointer_image img;
 };
 
 struct kmscon_terminal {
@@ -102,6 +116,7 @@ struct kmscon_terminal {
 	unsigned int font_size;
 
 	struct kmscon_pointer pointer;
+	struct shape_cache shape_cache[POINTER_SHAPE_MAX];
 
 	struct ev_timer *blink_timer;
 	struct ev_timer *blink_cursor;
@@ -243,20 +258,90 @@ static uint32_t *generate_ibeam_cursor(unsigned int font_height, unsigned int *w
 	return pixels;
 }
 
+static bool shape_in_theme(struct kmscon_terminal *term, int shape)
+{
+	struct shape_cache *cache = &term->shape_cache[shape];
+
+	if (!cache->supported)
+		cache->supported = pointer_image_exists(term->conf->pointer_theme, shape) ? 1 : -1;
+	return cache->supported > 0;
+}
+
+/*
+ * Load a shape from the pointer theme, sized for @font_height and rotated to
+ * @orientation. The unrotated image is cached per shape, at the last size
+ * asked for, so switching between shapes does not go back to the disk.
+ */
+static int load_shape_image(struct kmscon_terminal *term, int shape, unsigned int font_height,
+			    enum Orientation orientation, struct pointer_image *out)
+{
+	struct shape_cache *cache = &term->shape_cache[shape];
+	unsigned int size = term->conf->pointer_size ? term->conf->pointer_size : font_height;
+	size_t bytes;
+	int ret;
+
+	if (!shape_in_theme(term, shape))
+		return -ENOENT;
+
+	if (!cache->img.pixels || cache->size != size) {
+		pointer_image_free(&cache->img);
+		ret = pointer_image_load(term->conf->pointer_theme, shape, size,
+					 VIDEO_CURSOR_MAX_SIZE, &cache->img);
+		if (ret) {
+			log_warning("cannot load pointer shape %s from theme %s: %d",
+				    pointer_shape_name(shape), term->conf->pointer_theme, ret);
+			cache->supported = -1;
+			return ret;
+		}
+		cache->size = size;
+	}
+
+	*out = cache->img;
+	bytes = (size_t)out->width * out->height * sizeof(*out->pixels);
+	out->pixels = malloc(bytes);
+	if (!out->pixels)
+		return -ENOMEM;
+	memcpy(out->pixels, cache->img.pixels, bytes);
+
+	ret = pointer_image_rotate(out, orientation);
+	if (ret)
+		pointer_image_free(out);
+	return ret;
+}
+
+static void free_shape_cache(struct kmscon_terminal *term)
+{
+	int i;
+
+	for (i = 0; i < POINTER_SHAPE_MAX; i++)
+		pointer_image_free(&term->shape_cache[i].img);
+}
+
 static void setup_hw_cursor(struct screen *scr)
 {
+	struct kmscon_terminal *term = scr->term;
 	bool rotate = scr->txt->orientation == OR_LEFT || scr->txt->orientation == OR_RIGHT;
+	struct pointer_image img;
 	unsigned int beam_h;
 	unsigned int beam_w;
 	uint32_t *pixels;
 	int ret;
 
-	pixels = generate_ibeam_cursor(scr->txt->font->height, &beam_w, &beam_h, rotate);
-	if (!pixels)
-		return;
+	if (term->pointer.shape != pointer_shape_text() &&
+	    !load_shape_image(term, term->pointer.shape, scr->txt->font->height,
+			      scr->txt->orientation, &img)) {
+		ret = display_setup_cursor(scr->disp, img.pixels, img.width, img.height, img.hot_x,
+					   img.hot_y);
+		pointer_image_free(&img);
+	} else {
+		pixels = generate_ibeam_cursor(scr->txt->font->height, &beam_w, &beam_h, rotate);
+		if (!pixels)
+			return;
 
-	ret = display_setup_cursor(scr->disp, pixels, beam_w, beam_h, beam_w / 2, beam_h / 2);
-	free(pixels);
+		ret = display_setup_cursor(scr->disp, pixels, beam_w, beam_h, beam_w / 2,
+					   beam_h / 2);
+		free(pixels);
+	}
 
 	if (ret) {
 		log_debug("HW cursor not available for display %s, using software",
@@ -463,6 +548,77 @@ static void asciinema_start(struct kmscon_terminal *term)
 	kmscon_asciinema_start(term->asciinema);
 }
 
+static bool has_hw_cursor(struct kmscon_terminal *term)
+{
+	struct screen *scr;
+
+	dlist_for_each_entry(scr, &term->screens, list)
+	{
+		if (scr->hw_cursor)
+			return true;
+	}
+	return false;
+}
+
+/*
+ * Whether OSC 22 can show a shape. The text shape is the terminal's own
+ * I-beam, drawn by the software pointer too; every other shape needs a
+ * hardware cursor and the pointer theme to have it.
+ */
+static bool shape_supported(int shape, void *data)
+{
+	struct kmscon_terminal *term = data;
+
+	if (!term->conf->mouse)
+		return false;
+	if (shape == pointer_shape_text())
+		return true;
+	return has_hw_cursor(term) && shape_in_theme(term, shape);
+}
+
+static void hw_cursor_show(struct kmscon_terminal *term, int32_t x, int32_t y);
+
+/* Show the shape the application asked for, or the default for @grabbed. */
+static void apply_pointer_shape(struct kmscon_terminal *term, bool grabbed)
+{
+	struct screen *scr;
+	int shape;
+
+	shape = pointer_shape_effective(&term->pointer.shapes, grabbed);
+	if (shape == term->pointer.shape)
+		return;
+
+	term->pointer.shape = shape;
+	dlist_for_each_entry(scr, &term->screens, list)
+	{
+		refresh_hw_cursor(scr);
+	}
+
+	/* setting up the cursor image hides it */
+	if (term->pointer.visible && term->awake)
+		hw_cursor_show(term, term->pointer.x, term->pointer.y);
+}
+
+static bool mouse_grabbed(struct kmscon_terminal *term)
+{
+	return tsm_vte_get_mouse_mode(term->vte) != TSM_MOUSE_TRACK_DISABLE;
+}
+
+static void pointer_shape_event(struct kmscon_terminal *term, const char *payload)
+{
+	bool grabbed = mouse_grabbed(term);
+	char *reply;
+
+	if (pointer_shape_osc(&term->pointer.shapes, payload, grabbed, shape_supported, term,
+			      &reply))
+		apply_pointer_shape(term, grabbed);
+
+	if (reply) {
+		kmscon_pty_write(term->pty, reply, strlen(reply));
+		free(reply);
+	}
+}
+
 static void osc_event(struct tsm_vte *vte, const char *osc_string, size_t osc_len, void *data)
 {
 	struct kmscon_terminal *term = data;
@@ -473,6 +629,9 @@ static void osc_event(struct tsm_vte *vte, const char *osc_string, size_t osc_le
 	} else if (strcmp(osc_string, "setForeground") == 0) {
 		log_info("Got OSC setForeground");
 		kmscon_session_set_foreground(term->session);
+	} else if (strncmp(osc_string, "22", 2) == 0 &&
+		   (osc_string[2] == ';' || osc_string[2] == 0)) {
+		pointer_shape_event(term, osc_string[2] ? osc_string + 3 : "");
 	}
 }
 
@@ -501,6 +660,7 @@ static void mouse_event(struct tsm_vte *vte, enum tsm_mouse_track_mode track_mod
 
 	term->pointer.select = false;
 	tsm_screen_selection_reset(term->console);
+	apply_pointer_shape(term, track_mode != TSM_MOUSE_TRACK_DISABLE);
 }
 
 static unsigned int terminal_get_font_size(struct kmscon_terminal *term)
@@ -1257,6 +1417,8 @@ static int terminal_open(struct kmscon_terminal *term)
 		return -EALREADY;
 
 	tsm_vte_hard_reset(term->vte);
+	pointer_shape_stack_reset(&term->pointer.shapes);
+	apply_pointer_shape(term, false);
 	width = tsm_screen_get_width(term->console);
 	height = tsm_screen_get_height(term->console);
 	ret = kmscon_pty_open(term->pty, width, height, has_kms_display(term));
@@ -1336,6 +1498,7 @@ void terminal_destroy(struct kmscon_terminal *term)
 	input_unref(term->input);
 	ev_eloop_unref(term->eloop);
 	free_selection(term);
+	free_shape_cache(term);
 	free(term);
 }
 
@@ -1397,6 +1560,7 @@ struct kmscon_terminal *terminal_new(struct kmscon_session *session, unsigned in
 	term->session = session;
 	term->eloop = eloop;
 	term->input = input;
+	term->pointer.shape = pointer_shape_text();
 	dlist_init(&term->screens);
 
 	term->conf_ctx = conf_ctx;

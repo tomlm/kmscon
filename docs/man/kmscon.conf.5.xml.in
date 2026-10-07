@@ -336,6 +336,28 @@ font-name=Ubuntu Mono
       </varlistentry>
 
       <varlistentry>
+        <term><option>pointer-theme</option></term>
+        <listitem>
+          <para>Xcursor theme used to draw the pointer shapes applications set
+                with OSC 22, looked up in $XCURSOR_PATH, or ~/.local/share/icons,
+                ~/.icons, /usr/share/icons and /usr/share/pixmaps. Shapes the
+                theme lacks are reported as unsupported. Only the hardware cursor
+                draws shapes. (default: default)
+          </para>
+        </listitem>
+      </varlistentry>
+
+      <varlistentry>
+        <term><option>pointer-size</option></term>
+        <listitem>
+          <para>Pointer size in pixels. 0 follows the font height. The size is
+                rounded to the nearest one the theme provides, and limited to
+                64 pixels. (default: 0)
+          </para>
+        </listitem>
+      </varlistentry>
+
+      <varlistentry>
         <term><option>dpms-timeout</option></term>
         <listitem>
           <para>Set screen timeout in seconds (default: 600 = 10 minutes).

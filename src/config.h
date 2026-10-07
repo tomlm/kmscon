@@ -131,6 +131,10 @@ struct kmscon_conf_t {
 	bool natural_scrolling;
 	/* Force software cursor */
 	bool soft_cursor;
+	/* Xcursor theme for OSC 22 pointer shapes */
+	char *pointer_theme;
+	/* pointer size in pixels (0 = follow the font height) */
+	unsigned int pointer_size;
 	/* DPMS screen timeout in seconds (0 = disabled) */
 	unsigned int dpms_timeout;
 

@@ -143,6 +143,11 @@ static void print_help()
 		"\t                                 Invert mouse wheel direction\n"
 		"\t    --soft-cursor              [off]\n"
 		"\t                                 Force software cursor\n"
+		"\t    --pointer-theme <theme>    [default]\n"
+		"\t                                 Xcursor theme for pointer shapes\n"
+		"\t                                 set by applications (OSC 22)\n"
+		"\t    --pointer-size <pixels>    [0]\n"
+		"\t                                 Pointer size (0=follow font height)\n"
 		"\t    --dpms-timeout <secs>      [600]\n"
 		"\t                                 Screen timeout in seconds (0=off)\n"
 		"\n"
@@ -766,6 +771,8 @@ int kmscon_conf_new(struct conf_ctx **out)
 		CONF_OPTION_BOOL(0, "mouse", &conf->mouse, true),
 		CONF_OPTION_BOOL(0, "natural-scrolling", &conf->natural_scrolling, false),
 		CONF_OPTION_BOOL(0, "soft-cursor", &conf->soft_cursor, false),
+		CONF_OPTION_STRING(0, "pointer-theme", &conf->pointer_theme, "default"),
+		CONF_OPTION_UINT(0, "pointer-size", &conf->pointer_size, 0),
 		CONF_OPTION_UINT(0, "dpms-timeout", &conf->dpms_timeout, 600),
 
 		/* Grabs / Keyboard-Shortcuts */
