@@ -1,0 +1,87 @@
+name: Conchix packages
+
+# Builds the kmscon and libtsm .debs that Conchix installs in place of
+# trixie-backports' kmscon. See packaging/conchix/build-debs.sh.
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: "Conchix revision: the N in the +conchixN version suffix"
+        required: true
+        default: "1"
+      release:
+        description: "Attach the packages to a GitHub release"
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "conchix-r*"
+
+jobs:
+  debs:
+    name: Debian packages (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve revision
+        id: rev
+        shell: bash
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            REV="${GITHUB_REF_NAME#conchix-r}"
+          else
+            REV="${{ inputs.revision }}"
+          fi
+          echo "rev=$REV" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        shell: bash
+        env:
+          CONCHIX_REV: ${{ steps.rev.outputs.rev }}
+          OUT: out
+        run: bash packaging/conchix/build-debs.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: conchix-debs-${{ matrix.arch }}
+          path: |
+            out/*.deb
+            out/VERSION
+          if-no-files-found: error
+
+  release:
+    name: Release
+    needs: debs
+    if: github.ref_type == 'tag' || inputs.release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: debs
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="$(cat debs/VERSION)"
+          TAG="${{ github.ref_type == 'tag' && github.ref_name || '' }}"
+          TAG="${TAG:-conchix-v$VERSION}"
+          gh release create "$TAG" debs/*.deb \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "kmscon $VERSION for Conchix" \
+            --notes "kmscon $VERSION (OSC 22 pointer shapes) and the libtsm it needs, built for Debian trixie on amd64 and arm64. Install both: apt-get install ./libtsm4_*.deb ./kmscon_*.deb"
