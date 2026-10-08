@@ -73,6 +73,7 @@ struct kmscon_video {
 	struct video *video;
 	struct uterm_monitor_dev *udev;
 	char *node;
+	char *pathname;
 	int fd;
 	int fd_id;
 	bool drm;
@@ -113,7 +114,7 @@ const char be_fbdev[] = "fbdev";
 static int seat_video_init(struct kmscon_video *vid);
 static int kmscon_seat_add_video(struct kmscon_seat *seat, enum uterm_monitor_dev_type type,
 				 enum uterm_monitor_dev_flag flags, const char *node,
-				 struct uterm_monitor_dev *udev);
+				 const char *pathname, struct uterm_monitor_dev *udev);
 static void kmscon_seat_remove_video(struct kmscon_seat *seat, void *data);
 static void kmscon_seat_poll_video(void *data);
 
@@ -360,7 +361,6 @@ static void seat_remove_display(void *data, struct display *disp)
 
 static void seat_refresh_display(void *data, struct display *disp)
 {
-	struct kmscon_session *s;
 	struct kmscon_display *d;
 	struct kmscon_seat *seat = data;
 
@@ -370,12 +370,8 @@ static void seat_refresh_display(void *data, struct display *disp)
 	if (!d)
 		return;
 
-	if (d->activated) {
-		dlist_for_each_entry(s, &seat->sessions, list)
-		{
-			terminal_refresh_displays(s->term);
-		}
-	}
+	if (d->activated && seat->current_sess)
+		terminal_refresh_displays(seat->current_sess->term);
 }
 
 static void seat_vt_activate(struct uterm_vt *vt, void *data)
@@ -464,7 +460,7 @@ static void seat_dpms_timeout(struct ev_timer *timer, uint64_t num, void *data)
 	struct kmscon_display *d;
 	int ret;
 
-	if (!seat->conf->dpms_timeout || !seat->awake)
+	if (!seat->conf->dpms_timeout || !seat->awake || !seat->foreground)
 		return;
 
 	log_debug("DPMS: blanking screen due to inactivity");
@@ -491,7 +487,7 @@ static void seat_dpms_reset_timer(struct kmscon_seat *seat)
 	struct itimerspec spec;
 	int ret;
 
-	if (!seat->conf->dpms_timeout || !seat->dpms_timer)
+	if (!seat->conf->dpms_timeout || !seat->dpms_timer || !seat->foreground)
 		return;
 
 	/* If screen is blanked, unblank it */
@@ -504,7 +500,8 @@ static void seat_dpms_reset_timer(struct kmscon_seat *seat)
 				continue;
 			ret = display_set_dpms(d->disp, DPMS_ON);
 			if (ret)
-				log_warning("cannot set DPMS to ON for display: %d", ret);
+				log_warning("cannot set DPMS to ON for display: [%s] %d",
+					    display_name(d->disp), ret);
 		}
 		if (seat->current_sess)
 			terminal_activate(seat->current_sess->term);
@@ -639,15 +636,15 @@ static void kmscon_seat_remove_input(struct kmscon_seat *seat, void *data)
 }
 
 static void seat_monitor_new_dev(const char *node, enum uterm_monitor_dev_type type,
-				 enum uterm_monitor_dev_flag flags, void *data,
-				 struct uterm_monitor_dev *udev)
+				 enum uterm_monitor_dev_flag flags, const char *pathname,
+				 void *data, struct uterm_monitor_dev *udev)
 {
 	struct kmscon_seat *seat = data;
 
 	switch (type) {
 	case UTERM_MONITOR_DRM:
 	case UTERM_MONITOR_FBDEV:
-		kmscon_seat_add_video(seat, type, flags, node, udev);
+		kmscon_seat_add_video(seat, type, flags, node, pathname, udev);
 		break;
 	case UTERM_MONITOR_INPUT:
 		log_debug("new input device %s", node);
@@ -931,14 +928,13 @@ static int seat_video_init(struct kmscon_video *vid)
 			  vid->fd);
 		return vid->fd;
 	}
-
 	ret = video_new(&vid->video, seat->eloop, vid->fd, backend, &seat_video_cb, seat, width,
-			height, seat->conf->use_original_mode);
+			height, seat->conf->use_original_mode, vid->pathname);
 	if (ret && backend == be_drm3d) {
 		log_info("cannot create drm3d device %s on seat %s (%d); trying drm2d mode",
 			 vid->node, seat->name, ret);
 		ret = video_new(&vid->video, seat->eloop, vid->fd, be_drm2d, &seat_video_cb, seat,
-				width, height, seat->conf->use_original_mode);
+				width, height, seat->conf->use_original_mode, vid->pathname);
 	}
 	if (ret) {
 		log_error("cannot create video device %s on seat %s: %d", vid->node, seat->name,
@@ -954,7 +950,7 @@ err_close:
 
 static int kmscon_seat_add_video(struct kmscon_seat *seat, enum uterm_monitor_dev_type type,
 				 enum uterm_monitor_dev_flag flags, const char *node,
-				 struct uterm_monitor_dev *udev)
+				 const char *pathname, struct uterm_monitor_dev *udev)
 {
 	struct kmscon_video *vid;
 	int ret = -ENOMEM;
@@ -979,6 +975,9 @@ static int kmscon_seat_add_video(struct kmscon_seat *seat, enum uterm_monitor_de
 	if (!vid->node)
 		goto err_free;
 
+	if (pathname)
+		vid->pathname = strdup(pathname);
+
 	uterm_monitor_set_dev_data(udev, vid);
 
 	if (seat->awake) {
@@ -990,6 +989,7 @@ static int kmscon_seat_add_video(struct kmscon_seat *seat, enum uterm_monitor_de
 	return 0;
 
 err_node:
+	free(vid->pathname);
 	uterm_monitor_set_dev_data(udev, NULL);
 	free(vid->node);
 err_free:
@@ -1020,6 +1020,7 @@ static void kmscon_seat_remove_video(struct kmscon_seat *seat, void *data)
 		video_unref(vid->video);
 		uterm_vt_close_device(seat->vt, vid->fd, vid->fd_id);
 	}
+	free(vid->pathname);
 	free(vid->node);
 	free(vid);
 }
@@ -1151,9 +1152,16 @@ int kmscon_session_set_foreground(struct kmscon_session *sess)
 		if (ret)
 			return ret;
 
+		ret = seat_go_awake(seat);
+		if (ret)
+			return ret;
+
 		ret = seat_go_foreground(seat);
 		if (ret)
 			return ret;
+
+		if (sess->term)
+			terminal_activate(sess->term);
 	}
 
 	sess->foreground = true;
@@ -1172,7 +1180,13 @@ int kmscon_session_set_background(struct kmscon_session *sess)
 
 	seat = sess->seat;
 	if (seat && seat->current_sess == sess && seat->foreground) {
+		if (sess->term)
+			terminal_deactivate(sess->term);
+
 		ret = seat_go_background(seat);
+		if (ret)
+			return ret;
+		ret = seat_go_asleep(seat);
 		if (ret)
 			return ret;
 	}

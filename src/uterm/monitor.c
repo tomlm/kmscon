@@ -71,7 +71,7 @@ struct uterm_monitor {
 };
 
 static void mon_new_dev(struct uterm_monitor *mon, unsigned int type, unsigned int flags,
-			const char *node)
+			const char *node, const char *pathname)
 {
 	struct uterm_monitor_dev *dev;
 
@@ -89,7 +89,7 @@ static void mon_new_dev(struct uterm_monitor *mon, unsigned int type, unsigned i
 
 	dlist_link(&mon->devices, &dev->list);
 
-	mon->cb.new_dev(node, type, flags, mon->data, dev);
+	mon->cb.new_dev(node, type, flags, pathname, mon->data, dev);
 
 	log_debug("new device %s on %s", node, mon->seat_name);
 	return;
@@ -244,9 +244,21 @@ static bool is_drm_primary(struct uterm_monitor *mon, struct udev_device *dev, c
 			log_debug("DRM device %s is primary PCI GPU", node);
 			return true;
 		}
+		return false;
 	}
 
-	return false;
+	/*
+	 * SoC display controllers are platform devices without a boot_vga
+	 * attribute. Treat them as primary. USB displays sit below a platform
+	 * USB controller on such systems, but are never primary.
+	 */
+	if (udev_device_get_parent_with_subsystem_devtype(dev, "usb", NULL))
+		return false;
+	if (!udev_device_get_parent_with_subsystem_devtype(dev, "platform", NULL))
+		return false;
+
+	log_debug("DRM device %s is primary platform GPU", node);
+	return true;
 }
 
 /*
@@ -344,6 +356,7 @@ static unsigned int get_drm_flags(struct uterm_monitor *mon, struct udev_device 
 static void monitor_udev_add(struct uterm_monitor *mon, struct udev_device *dev)
 {
 	const char *sname, *subs, *node, *name, *sysname;
+	const char *pathname = NULL;
 	unsigned int type, flags;
 	int id;
 	struct udev_device *p;
@@ -378,6 +391,7 @@ static void monitor_udev_add(struct uterm_monitor *mon, struct udev_device *dev)
 		sname = udev_device_get_property_value(dev, "ID_SEAT");
 		type = UTERM_MONITOR_DRM;
 		flags = get_drm_flags(mon, dev, node);
+		pathname = udev_device_get_property_value(dev, "ID_PATH");
 	} else if (!strcmp(subs, "graphics")) {
 		id = get_fb_id(dev);
 		if (id < 0) {
@@ -413,7 +427,7 @@ static void monitor_udev_add(struct uterm_monitor *mon, struct udev_device *dev)
 		log_debug("adding device for unknown seat %s (%s)", sname, name);
 		return;
 	}
-	mon_new_dev(mon, type, flags, node);
+	mon_new_dev(mon, type, flags, node, pathname);
 }
 
 static void monitor_udev_remove(struct uterm_monitor *mon, struct udev_device *dev)

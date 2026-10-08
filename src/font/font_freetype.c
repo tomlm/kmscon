@@ -204,6 +204,19 @@ err:
 	return -EINVAL;
 }
 
+static FcBool _fc_monospace_font_filter_func(const FcPattern *pat, void *user_data)
+{
+	int spacing;
+
+	if (FcPatternGetInteger(pat, FC_SPACING, 0, &spacing) == FcResultMatch) {
+		if (spacing == FC_SPACING_CHARCELL || spacing == FC_SPACING_MONO ||
+		    spacing == FC_SPACING_DUAL)
+			return FcTrue;
+	}
+	/* non-monospace font doesn't have FC_SPACING property */
+	return FcFalse;
+}
+
 static int kmscon_font_freetype_init(struct kmscon_font *out, const char *name, unsigned int height)
 {
 	struct ft_data *ftf;
@@ -220,6 +233,7 @@ static int kmscon_font_freetype_init(struct kmscon_font *out, const char *name, 
 		log_err("Failed to initialize FreeType\n");
 		goto err_free;
 	}
+	FcConfigSetFontSetFilter(NULL, _fc_monospace_font_filter_func, NULL, NULL);
 	if (prepare_font(ftf->ft, &ftf->regular, name, height, false, out))
 		goto err_done;
 
@@ -432,7 +446,7 @@ static void select_font_size(struct kmscon_font *font, FT_Face face)
 			return;
 		}
 		height--;
-	} while (face->size->metrics.height >> 6 > height && height > 10);
+	} while (face->size->metrics.height >> 6 > font->height && height > 10);
 }
 
 static FT_Face prepare_tmp_face(FT_Library ft, struct ft_font *font, int fallback)
@@ -448,10 +462,7 @@ static FT_Face prepare_tmp_face(FT_Library ft, struct ft_font *font, int fallbac
 	if (!pattern)
 		return NULL;
 
-	if (FcPatternGetString(pattern, FC_FULLNAME, 0, &full_name) == FcResultMatch)
-		font->name = strdup((char *)full_name);
-	else
-		font->name = strdup("Unknown");
+	FcPatternGetString(pattern, FC_FULLNAME, 0, &full_name);
 
 	if (FcPatternGetString(pattern, FC_FILE, 0, &path) != FcResultMatch)
 		goto err_pattern;
@@ -459,7 +470,7 @@ static FT_Face prepare_tmp_face(FT_Library ft, struct ft_font *font, int fallbac
 	if (FcPatternGetInteger(pattern, FC_INDEX, 0, &index) != FcResultMatch)
 		log_warn("%s: failed to get face index", path);
 
-	log_debug("Loading fallback font %s %s", font->name, (char *)path);
+	log_debug("Loading fallback font %s %s", (char *)full_name, (char *)path);
 
 	err = FT_New_Face(ft, (char *)path, index, &face);
 	if (err)

@@ -169,7 +169,7 @@ bool display_has_damage(struct display *disp);
 
 int video_new(struct video **out, struct ev_eloop *eloop, int fd, const char *backend,
 	      struct video_cb *cb, void *data, unsigned int desired_width,
-	      unsigned int desired_height, bool use_original);
+	      unsigned int desired_height, bool use_original, const char *pathname);
 void video_ref(struct video *video);
 void video_unref(struct video *video);
 
@@ -179,6 +179,7 @@ void video_sleep(struct video *video);
 int video_wake_up(struct video *video);
 bool video_is_awake(struct video *video);
 void video_poll(struct video *video);
+const char *video_name(struct video *video);
 
 #ifdef BUILD_ENABLE_VIDEO_DRM2D
 extern struct video_ops drm2d_module;
