@@ -84,3 +84,19 @@ test_pointer_shape = executable(
     include_directories: misc_inc,
 )
 test('test_pointer_shape', test_pointer_shape)
+
+if enable_font_freetype
+    test_font_freetype = executable(
+        'test_font_freetype',
+        'test_font_freetype.c',
+        include_directories: src_inc,
+        dependencies: [
+            libtsm_deps,
+            freetype_deps,
+            fontconfig_deps,
+            threads_deps,
+            shl_deps,
+        ],
+    )
+    test('test_font_freetype', test_font_freetype)
+endif
