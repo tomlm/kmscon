@@ -1,13 +1,13 @@
-name: Conchix packages
+name: Cursix packages
 
-# Builds the kmscon and libtsm .debs that Conchix installs in place of
-# trixie-backports' kmscon. See packaging/conchix/build-debs.sh.
+# Builds the kmscon and libtsm .debs that Cursix installs in place of
+# trixie-backports' kmscon. See packaging/cursix/build-debs.sh.
 
 on:
   workflow_dispatch:
     inputs:
       revision:
-        description: "Conchix revision: the N in the +conchixN version suffix"
+        description: "Cursix revision: the N in the +cursixN version suffix"
         required: true
         default: "1"
       release:
@@ -16,7 +16,7 @@ on:
         default: false
   push:
     tags:
-      - "conchix-r*"
+      - "cursix-r*"
 
 jobs:
   debs:
@@ -39,7 +39,7 @@ jobs:
         shell: bash
         run: |
           if [ "${{ github.ref_type }}" = "tag" ]; then
-            REV="${GITHUB_REF_NAME#conchix-r}"
+            REV="${GITHUB_REF_NAME#cursix-r}"
           else
             REV="${{ inputs.revision }}"
           fi
@@ -48,13 +48,13 @@ jobs:
       - name: Build
         shell: bash
         env:
-          CONCHIX_REV: ${{ steps.rev.outputs.rev }}
+          CURSIX_REV: ${{ steps.rev.outputs.rev }}
           OUT: out
-        run: bash packaging/conchix/build-debs.sh
+        run: bash packaging/cursix/build-debs.sh
 
       - uses: actions/upload-artifact@v4
         with:
-          name: conchix-debs-${{ matrix.arch }}
+          name: cursix-debs-${{ matrix.arch }}
           path: |
             out/*.deb
             out/VERSION
@@ -79,9 +79,9 @@ jobs:
         run: |
           VERSION="$(cat debs/VERSION)"
           TAG="${{ github.ref_type == 'tag' && github.ref_name || '' }}"
-          TAG="${TAG:-conchix-v$VERSION}"
+          TAG="${TAG:-cursix-v$VERSION}"
           gh release create "$TAG" debs/*.deb \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
-            --title "kmscon $VERSION for Conchix" \
+            --title "kmscon $VERSION for Cursix" \
             --notes "kmscon $VERSION (OSC 22 pointer shapes) and the libtsm it needs, built for Debian trixie on amd64 and arm64. Install both: apt-get install ./libtsm4_*.deb ./kmscon_*.deb"

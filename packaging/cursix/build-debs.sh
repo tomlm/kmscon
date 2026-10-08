@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# Build the Debian packages Conchix installs in place of trixie-backports'
+# Build the Debian packages Cursix installs in place of trixie-backports'
 # kmscon: this fork, and the libtsm it needs.
 #
 # Runs as root inside a debian:trixie container (CI does exactly that):
 #
-#   docker run --rm -v "$PWD:/src" -w /src debian:trixie packaging/conchix/build-debs.sh
+#   docker run --rm -v "$PWD:/src" -w /src debian:trixie packaging/cursix/build-debs.sh
 #
 # kmscon is packaged with the trixie-backports debian/ directory, laid over this
 # tree, so the result installs and behaves like the stock package. This fork
@@ -13,23 +13,23 @@
 # libtsm is rebuilt from forky's source first and shipped alongside.
 #
 # Environment:
-#   CONCHIX_REV  the N in the +conchixN version suffix (default 1)
+#   CURSIX_REV  the N in the +cursixN version suffix (default 1)
 #   OUT          where the .debs are left (default ./out)
 #
 set -euo pipefail
 
-CONCHIX_REV="${CONCHIX_REV:-1}"
+CURSIX_REV="${CURSIX_REV:-1}"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUT="$(mkdir -p "${OUT:-$SRC/out}" && cd "${OUT:-$SRC/out}" && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 export DEBIAN_FRONTEND=noninteractive
-export DEBEMAIL="${DEBEMAIL:-conchix@users.noreply.github.com}"
-export DEBFULLNAME="${DEBFULLNAME:-Conchix}"
+export DEBEMAIL="${DEBEMAIL:-cursix@users.noreply.github.com}"
+export DEBFULLNAME="${DEBFULLNAME:-Cursix}"
 
-if [[ ! "$CONCHIX_REV" =~ ^[0-9]+$ ]]; then
-	echo "CONCHIX_REV must be a number, got '$CONCHIX_REV'" >&2
+if [[ ! "$CURSIX_REV" =~ ^[0-9]+$ ]]; then
+	echo "CURSIX_REV must be a number, got '$CURSIX_REV'" >&2
 	exit 1
 fi
 
@@ -40,7 +40,7 @@ fi
 KEYRING=/usr/share/keyrings/debian-archive-keyring.pgp
 [[ -f "$KEYRING" ]] || KEYRING=/usr/share/keyrings/debian-archive-keyring.gpg
 rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*
-cat >/etc/apt/sources.list.d/conchix-build.sources <<EOF
+cat >/etc/apt/sources.list.d/cursix-build.sources <<EOF
 Types: deb deb-src
 URIs: http://deb.debian.org/debian
 Suites: trixie trixie-updates trixie-backports
@@ -71,9 +71,9 @@ apt-get source libtsm/forky
 cd "$(find "$WORK" -maxdepth 1 -type d -name 'libtsm-*' | head -n1)"
 # The ~ sorts below forky's own version, as backports do, so a real libtsm 4.8
 # for trixie would supersede this one; -b lets dch go lower than the changelog.
-dch -b --newversion "$(dpkg-parsechangelog -SVersion)~conchix13+$CONCHIX_REV" \
+dch -b --newversion "$(dpkg-parsechangelog -SVersion)~cursix13+$CURSIX_REV" \
 	--distribution trixie --force-distribution \
-	"Rebuild for Conchix on trixie, for the kmscon fork."
+	"Rebuild for Cursix on trixie, for the kmscon fork."
 # forky's packaging wants debhelper compat 14, which only backports has.
 apt-get build-dep -y -t trixie-backports ./
 dpkg-buildpackage -b -us -uc
@@ -105,9 +105,9 @@ sed -i 's/libtsm-dev (>= [0-9.]*)/libtsm-dev (>= 4.8.0)/' debian/control
 grep -q 'libtsm-dev (>= 4.8.0)' debian/control
 
 UPSTREAM="$(sed -n "s/^    version: '\(.*\)',$/\1/p" meson.build | head -n1)"
-VERSION="$UPSTREAM+conchix$CONCHIX_REV-1"
+VERSION="$UPSTREAM+cursix$CURSIX_REV-1"
 dch --newversion "$VERSION" --distribution trixie-backports --force-distribution \
-	"Conchix build of github.com/tomlm/kmscon: OSC 22 mouse pointer shapes."
+	"Cursix build of github.com/tomlm/kmscon: OSC 22 mouse pointer shapes."
 
 apt-get build-dep -y -t trixie-backports ./
 dpkg-buildpackage -b -us -uc
